@@ -137,18 +137,45 @@ def process_file(input_path, sheet_name=None, input_col='Номенклатур�
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input', '-i', required=True, help='Input Excel file path')
-    parser.add_argument('--sheet', '-s', default=None, help='Sheet name (optional)')
-    parser.add_argument('--col', '-c', default='Номенклатура поставщика', help='Column name with queries')
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--input', '-i', help='Input Excel file path')
+    group.add_argument('--query', '-q', help='Single query to process')
+    
+    parser.add_argument('--sheet', '-s', default=None, help='Sheet name (optional, for Excel input)')
+    parser.add_argument('--col', '-c', default='Номенклатура поставщика', help='Column name with queries (for Excel input)')
     parser.add_argument('--out', default='./output', help='Output directory')
     parser.add_argument('--start-row', type=int, default=0, help='Start processing from this row (0-based index)')
     parser.add_argument('--max-rows', type=int, default=None, help='Limit input rows to first N rows (for testing)')
     args = parser.parse_args()
     
     try:
-        paths = process_file(args.input, sheet_name=args.sheet, input_col=args.col,
-                           out_dir=args.out, start_row=args.start_row, max_rows=args.max_rows)
-        print('Output files:', paths)
+        if args.input:
+            paths = process_file(args.input, sheet_name=args.sheet, input_col=args.col,
+                               out_dir=args.out, start_row=args.start_row, max_rows=args.max_rows)
+            print('Output files:', paths)
+        else:
+            # Извлекаем характеристики для фильтров
+            specs = extract_specs(args.query)
+            logging.info(f"Extracted specs: {specs}")
+            
+            proxy = random.choice(PROXIES) if PROXIES else None
+            candidates = fetch_search_results(args.query, proxy=proxy, specs=specs)
+            
+            if candidates:
+                logging.info(f"Found {len(candidates)} products")
+                scored = choose_best_candidate(args.query, candidates, topn=5)
+                if scored:
+                    for idx, result in enumerate(scored[:5], 1):
+                        print(f"\nMatch #{idx}:")
+                        print(f"Title: {result.get('title')}")
+                        print(f"Score: {result.get('_score')}")
+                        print(f"Price: {result.get('price')}")
+                        print(f"URL: {result.get('url')}")
+                else:
+                    print("No matches found")
+            else:
+                print("No products found")
+                
     except Exception as e:
         print('Error:', e)
         import sys

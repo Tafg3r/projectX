@@ -13,6 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import json
 from bs4 import BeautifulSoup
 from config import PROXIES, TIMEOUT, MIN_DELAY, MAX_DELAY
+from kaspi_filters import apply_filters
 
 # Глобальный драйвер для повторного использования
 driver = None
@@ -37,54 +38,6 @@ def close_driver():
     if driver:
         driver.quit()
         driver = None
-
-def apply_filters(driver, specs):
-    """Применяет фильтры поиска на странице Kaspi"""
-    try:
-        # Открываем фильтры
-        filter_button = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '[data-test-id="filter-button"]'))
-        )
-        filter_button.click()
-        
-        # Применяем фильтры RAM
-        if specs['ram']:
-            try:
-                ram_filter = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, f"//div[contains(text(),'Оперативная память')]/following-sibling::div//span[contains(text(),'{specs['ram']} ГБ')]"))
-                )
-                ram_filter.click()
-            except Exception as e:
-                logging.warning(f"RAM filter not found: {e}")
-        
-        # Применяем фильтры процессора
-        if specs['processor']:
-            try:
-                proc_filter = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, f"//div[contains(text(),'Процессор')]/following-sibling::div//span[contains(text(),'{specs['processor']}')]"))
-                )
-                proc_filter.click()
-            except Exception as e:
-                logging.warning(f"Processor filter not found: {e}")
-        
-        # Применяем фильтры накопителя
-        if specs['storage']:
-            try:
-                storage_filter = WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.XPATH, f"//div[contains(text(),'Объем накопителя')]/following-sibling::div//span[contains(text(),'{specs['storage']}')]"))
-                )
-                storage_filter.click()
-            except Exception as e:
-                logging.warning(f"Storage filter not found: {e}")
-        
-        # Показать результаты
-        show_results = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, '[data-test-id="show-results-button"]'))
-        )
-        show_results.click()
-        
-    except Exception as e:
-        logging.warning(f"Failed to apply filters: {e}")
 
 def scrape_kaspi(query: str, specs=None) -> str:
     """Получение HTML страницы с результатами поиска Kaspi."""
@@ -191,14 +144,53 @@ def parse_products(html: str, limit=20):
     products = sorted(products[:limit], key=lambda x: (-1 if 'водонагреватель' in x.get('title', '').lower() else 0, x.get('price', 0) or 0))
     return products[:limit]
 
-def fetch_search_results(query, proxy=None):
+def fetch_search_results(query, proxy=None, specs=None):
     """Основная функция поиска товаров на Kaspi."""
     try:
-        html = scrape_kaspi(query)
-        products = parse_products(html)
-        if not products:
+        html = scrape_kaspi(query, specs=specs)
+        if not html:
+            logging.warning(f"No HTML content received for query: {query}")
+            return []
+            
+        soup = BeautifulSoup(html, 'html.parser')
+        items = []
+        
+        for card in soup.select('div.item-card'):
+            try:
+                # Ссылка и ID
+                link_elem = card.select_one('a.item-card__name-link')
+                if not link_elem:
+                    continue
+                
+                link = 'https://kaspi.kz' + link_elem['href']
+                item_id = link.split('/')[-1]
+                
+                # Название
+                title = link_elem.text.strip()
+                
+                # Цена
+                price_elem = card.select_one('span.item-card__prices-price')
+                price = None
+                if price_elem:
+                    price_text = price_elem.text.strip()
+                    price = int(''.join(filter(str.isdigit, price_text)))
+                
+                item = {
+                    'id': item_id,
+                    'title': title,
+                    'price': price,
+                    'url': link
+                }
+                items.append(item)
+                
+            except Exception as e:
+                logging.warning(f"Error parsing card: {e}")
+                continue
+                
+        if not items:
             logging.warning(f"No products found for query: {query}")
-        return products
+        return items
+        
     except Exception as e:
         logging.error(f"Error fetching results: {e}")
         return []

@@ -4,3 +4,5 @@ pandas
 openpyxl
 rapidfuzz
 user_agent
+selenium
+webdriver-manager
